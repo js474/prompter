@@ -21,7 +21,7 @@ html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
 /* Teleprompter */
 #prompt{flex:1 1 0;min-height:0;position:relative;overflow:hidden;background:#000}
 #text{position:absolute;left:0;right:0;top:0;padding:0 22px;text-align:center;
-  transition:transform .45s ease-out;will-change:transform;line-height:1.45}
+  will-change:transform;line-height:1.45}
 #text p{margin:0 0 .7em}
 #text span{color:#fff;transition:color .2s}
 #text span.done{color:#6b6b6b}
@@ -299,29 +299,66 @@ function loadScript(){
   setPos(0, true);
 }
 
+/* Position: conf = per Sprache bestätigtes Wort, fpos = gleitende Leseposition (Kommazahl). */
+let conf = 0, vel = 0, rate = 2.3, lastConfT = 0, yw = [], curY = 0, shownY = NaN;
+const LEAD = 4;
+
+function layout(){
+  yw = []; const n = spans.length; if (!n) return;
+  const lh = parseFloat(getComputedStyle($('text')).fontSize) * 1.45;
+  let i = 0;
+  while (i < n) {
+    const top = spans[i].offsetTop; let k = i;
+    while (k < n && Math.abs(spans[k].offsetTop - top) < 2) k++;
+    const next = k < n ? spans[k].offsetTop : top + lh;
+    for (let m = i; m < k; m++) yw[m] = top + (m - i) / (k - i) * (next - top);
+    i = k;
+  }
+  yw[n] = yw[n - 1] + lh / 2;
+}
+function yAt(f){
+  if (!yw.length) return 0;
+  const i = Math.max(0, Math.min(yw.length - 2, Math.floor(f)));
+  return yw[i] + (yw[i + 1] - yw[i]) * Math.max(0, Math.min(1, f - i));
+}
+function mark(p){
+  p = Math.max(0, Math.min(tokens.length, p));
+  if (p === pos) return;
+  const a = Math.min(pos, p), b = Math.max(pos, p);
+  for (let i = a; i < b; i++) spans[i].classList.toggle('done', i < p);
+  pos = p;
+}
 function setPos(p, force){
   p = Math.max(0, Math.min(tokens.length, p));
-  if (p === pos && !force) return;
-  const a = Math.min(pos, p), b = Math.max(pos, p);
-  if (force) spans.forEach((s, i) => s.classList.toggle('done', i < p));
-  else for (let i = a; i < b; i++) spans[i].classList.toggle('done', i < p);
-  pos = p; fpos = Math.max(fpos, p); if (force || fpos > p + 1) fpos = p;
-  const sp = spans[Math.min(p, spans.length - 1)];
-  const y = sp ? sp.offsetTop - $('prompt').clientHeight * S.line / 100 : 0;
-  $('text').style.transform = `translateY(${-Math.max(0, y)}px)`;
-  if (p >= tokens.length && tokens.length && running && !recorder) stopPrompter();
+  conf = p; fpos = p; vel = 0; lastConfT = 0;
+  spans.forEach((s, i) => s.classList.toggle('done', i < p)); pos = p;
+  layout(); curY = targetY(); render(true);
+}
+const targetY = () => Math.max(0, yAt(fpos) - $('prompt').clientHeight * S.line / 100);
+function render(force){
+  const y = +curY.toFixed(2);
+  if (!force && Math.abs(y - shownY) < 0.05) return;
+  shownY = y; $('text').style.transform = `translate3d(0,${-y}px,0)`;
 }
 
 function heard(words){
   const last = words[words.length - 1], prev = words[words.length - 2];
   if (!last) return;
-  for (let j = Math.max(0, pos - 1); j < Math.min(tokens.length, pos + 14); j++) {
+  for (let j = Math.max(0, conf - 1); j < Math.min(tokens.length, conf + 14); j++) {
     if (!near(tokens[j], last)) continue;
     const two = prev && j > 0 && near(tokens[j - 1], prev);
-    if (j - pos <= 1 || two) { if (j + 1 > pos) setPos(j + 1); return; }
+    if (j - conf <= 2 || two) {
+      const nc = j + 1;
+      if (nc > conf) {
+        const now = performance.now(), d = nc - conf, dt = (now - lastConfT) / 1000;
+        if (lastConfT && dt > 0.15 && dt < 2.5 && d <= 6)
+          rate = Math.max(1.2, Math.min(5, rate * 0.75 + (d / dt) * 0.25));
+        lastConfT = now; conf = nc;
+      }
+      return;
+    }
   }
 }
-
 function startRecog(){
   if (!SR) return false;
   recogWanted = true;
@@ -338,7 +375,7 @@ function startRecog(){
         toast('Spracherkennung hier nicht möglich (' + e.error + '). Modus „Stimme“ aktiv.', 5000);
       }
     };
-    recog.onend = () => { if (recogWanted && running && S.mode === 'word') setTimeout(() => { try { recog.start(); } catch (_) {} }, 150); };
+    recog.onend = () => { if (recogWanted && running && S.mode === 'word') setTimeout(() => { try { recog.start(); } catch (_) {} }, 0); };
     recog.start();
     return true;
   } catch (_) { return false; }
@@ -347,23 +384,39 @@ function stopRecog(){ recogWanted = false; if (recog) { try { recog.abort(); } c
 
 function startPrompter(){
   if (!tokens.length) return;
-  if (pos >= tokens.length) setPos(0, true);
-  ensureAudio(); running = true; lastT = performance.now();
+  if (fpos >= tokens.length) setPos(0, true);
+  conf = Math.max(conf, Math.floor(fpos)); ensureAudio(); running = true;
   if (S.mode === 'word' && !startRecog()) { setMode('voice'); toast('Kein Wortabgleich in diesem Browser. Modus „Stimme“ aktiv.', 4500); }
   $('playIcon').setAttribute('d', 'M7 4v16M17 4v16');
 }
 function stopPrompter(){ running = false; stopRecog(); $('playIcon').setAttribute('d', 'M7 4l13 8-13 8z'); }
 
 function tick(t){
-  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  const dt = Math.min(0.05, (t - lastT) / 1000); lastT = t;
   const lv = level();
   if (lv > S.thr) lastVoice = t;
-  const speaking = t - lastVoice < 380;
+  const speaking = t - lastVoice < 450;
   $('dot').classList.toggle('on', speaking && (running || lv > S.thr));
-  if (running && S.mode !== 'word' && (S.mode === 'auto' || speaking)) {
-    fpos += S.wpm / 60 * dt;
-    if (Math.floor(fpos) > pos) setPos(Math.floor(fpos));
+  let vt = 0;
+  if (running) {
+    if (S.mode === 'auto') vt = S.wpm / 60;
+    else if (S.mode === 'voice') vt = speaking ? S.wpm / 60 : 0;
+    else {
+      const gap = conf - fpos;
+      if (gap > 0) vt = rate + gap * 2.5;
+      else if (speaking) vt = rate * Math.max(0, Math.min(1, (LEAD + gap) / LEAD));
+    }
   }
+  vel += (vt - vel) * (1 - Math.exp(-dt * (vt > vel ? 6 : 9)));
+  if (vel < 0.01 && vt === 0) vel = 0;
+  fpos += vel * dt;
+  if (S.mode === 'word') fpos = Math.min(fpos, conf + LEAD);
+  fpos = Math.min(fpos, tokens.length);
+  mark(Math.floor(fpos + 0.15));
+  const ty = targetY();
+  curY += (ty - curY) * (1 - Math.exp(-dt * 12));
+  render();
+  if (running && !recorder && tokens.length && fpos >= tokens.length) stopPrompter();
   requestAnimationFrame(tick);
 }
 
@@ -461,7 +514,7 @@ function closeAll(keep){
 }
 function style(){
   const t = $('text'); t.style.fontFamily = S.font; t.style.fontSize = S.size + 'px';
-  setPos(pos, true);
+  layout(); curY = targetY(); render(true);
 }
 function bindRange(id, key, unit, after){
   const el = $(id); el.value = S[key]; $(id + 'O').textContent = S[key] + unit;
@@ -492,7 +545,7 @@ bindRange('wpm', 'wpm', ''); bindRange('thr', 'thr', '');
 bindRange('size', 'size', '', style); bindRange('line', 'line', '%', style);
 $('lang').value = S.lang; $('lang').onchange = e => { S.lang = e.target.value; persist(); };
 $('font').value = S.font; $('font').onchange = e => { S.font = e.target.value; persist(); style(); };
-addEventListener('resize', () => setPos(pos, true));
+addEventListener('resize', () => { layout(); curY = targetY(); render(true); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !recorder && (!vTrack || vTrack.readyState === 'ended')) startCam();
 });
