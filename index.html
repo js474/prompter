@@ -19,11 +19,11 @@ html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
 #app{display:flex;flex-direction:column;height:100dvh;padding-top:env(safe-area-inset-top)}
 
 /* Teleprompter */
-#prompt{flex:1 1 0;min-height:0;position:relative;overflow:hidden;background:#000}
+#prompt{flex:0 0 auto;height:38%;min-height:0;position:relative;overflow:hidden;background:#000}
 #text{position:absolute;left:0;right:0;top:0;padding:0 22px;text-align:center;
-  will-change:transform;line-height:1.45}
+  will-change:transform;transform:translate3d(0,0,0);backface-visibility:hidden;line-height:1.45}
 #text p{margin:0 0 .7em}
-#text span{color:#fff;transition:color .2s}
+#text span{color:#fff}
 #text span.done{color:#6b6b6b}
 #prompt::after{content:"";position:absolute;left:0;right:0;bottom:0;height:22%;
   background:linear-gradient(transparent,#000);pointer-events:none}
@@ -31,11 +31,12 @@ html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
   background:#2ecc55;opacity:.15;transition:opacity .12s;z-index:2}
 #dot.on{opacity:1}
 #pctl{position:absolute;right:10px;bottom:8px;z-index:3;display:flex;gap:8px}
+#pctl .btn{background:#262626;-webkit-backdrop-filter:none;backdrop-filter:none}
 #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:#777;font-size:17px;padding:0 30px;text-align:center}
 
 /* Kamera */
-#cam{flex:2 1 0;min-height:0;position:relative;margin:0 8px;border-radius:28px 28px 0 0;
+#cam{flex:1 1 0;min-height:0;position:relative;margin:0 8px;border-radius:28px 28px 0 0;
   overflow:hidden;background:#111}
 #video{width:100%;height:100%;object-fit:cover;display:block;background:#111}
 #video.mirror{transform:scaleX(-1)}
@@ -82,6 +83,7 @@ html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
 #shade.open{display:block}
 .sheet h2{margin:0 0 14px;font-size:18px;display:flex;justify-content:space-between;align-items:center}
 .sheet h2 button{border:0;background:#333;color:#fff;border-radius:16px;padding:7px 14px;font-size:14px}
+.sheet h2 .x{width:34px;height:34px;padding:0;border-radius:50%;font-size:20px;line-height:34px}
 .row{display:flex;align-items:center;gap:12px;margin:0 0 16px}
 .row label{flex:0 0 112px;font-size:14px;color:#bbb}
 .row input[type=range]{flex:1;min-width:0;accent-color:#fff}
@@ -161,6 +163,8 @@ textarea{width:100%;height:150px;background:#2c2c2e;color:#fff;border:0;border-r
     <option value="Georgia,'Times New Roman',serif">Serif</option>
     <option value="'Avenir Next',Avenir,sans-serif">Avenir</option></select></div>
   <div class="row"><label>Schriftgröße</label><input type="range" id="size" min="18" max="56" step="1"><output id="sizeO"></output></div>
+  <div class="row"><label>Textfeld</label><input type="range" id="ph" min="25" max="70" step="1"><output id="phO"></output></div>
+  <div class="row"><label>Rand seitlich</label><input type="range" id="side" min="0" max="30" step="1"><output id="sideO"></output></div>
   <div class="row"><label>Leselinie</label><input type="range" id="line" min="5" max="60" step="5"><output id="lineO"></output></div>
   <div class="row" id="rowExp"><label>Belichtung</label><input type="range" id="exp"><output id="expO"></output></div>
   <div class="row" id="rowZoom"><label>Zoom</label><input type="range" id="zoom"><output id="zoomO"></output></div>
@@ -178,26 +182,26 @@ textarea{width:100%;height:150px;background:#2c2c2e;color:#fff;border:0;border-r
 </div>
 
 <div class="sheet" id="sSave">
-  <h2>Aufnahme <span id="saveInfo" style="font-size:13px;color:#999;font-weight:400"></span></h2>
-  <video id="preview" controls playsinline></video>
+  <h2><span>Aufnahme <span id="saveInfo" style="font-size:13px;color:#999;font-weight:400"></span></span><button class="x" id="xSave" aria-label="Schließen">✕</button></h2>
+  <video id="preview" controls playsinline preload="metadata"></video>
   <div class="acts">
     <button class="pri" id="share">In Fotos sichern</button>
     <button class="dng" id="drop">Verwerfen</button>
   </div>
-  <p class="hint">Im Teilen-Menü „Video sichern“ wählen. Die Aufnahme liegt bis dahin nur im Arbeitsspeicher, also vor dem Schließen sichern.</p>
+  <p class="hint">Im Teilen-Menü „Video sichern“ wählen. Die Aufnahme liegt nur im Arbeitsspeicher. Mit ✕ schließen verwirft sie.</p>
 </div>
 
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
 const S = Object.assign({q:'4k', facing:'user', mode:'word', wpm:140, thr:8, lang:'de-DE',
-  font:"ui-monospace,Menlo,'SF Mono',monospace", size:30, line:25, scripts:[], cur:null},
+  font:"ui-monospace,Menlo,'SF Mono',monospace", size:30, line:25, ph:38, side:0, scripts:[], cur:null},
   JSON.parse(localStorage.getItem('prompter') || '{}'));
 const persist = () => localStorage.setItem('prompter', JSON.stringify(S));
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const Q = {'4k':{w:3840,h:2160,f:30,bps:42e6}, hd:{w:1920,h:1080,f:60,bps:24e6}};
 
-let stream, vTrack, recorder, chunks = [], recFile, recStart = 0, timerInt, wake;
+let shared = false, stream, vTrack, recorder, chunks = [], recFile, recStart = 0, timerInt, wake;
 let actx, analyser, buf, recog, recogWanted = false;
 let tokens = [], spans = [], pos = 0, fpos = 0, running = false, lastVoice = 0, lastT = 0;
 
@@ -296,14 +300,16 @@ function loadScript(){
     });
     box.appendChild(p);
   });
-  setPos(0, true);
+  setPos(0);
 }
 
-/* Position: conf = per Sprache bestätigtes Wort, fpos = gleitende Leseposition (Kommazahl). */
-let conf = 0, vel = 0, rate = 2.3, lastConfT = 0, yw = [], curY = 0, shownY = NaN;
-const LEAD = 4;
+/* Position: conf = per Sprache bestätigtes Wort, pred = Vorhersage seit letzter Bestätigung,
+   fpos = gleitende Leseposition (Kommazahl), die dem Ziel mit Feder-Dämpfung folgt. */
+let conf = 0, pred = 0, vel = 0, rate = 2.3, speakT = 0, hist = [], yw = [], curY = 0, shownY = NaN, promptH = 300;
+const LEAD = 3;
 
 function layout(){
+  promptH = $('prompt').clientHeight;
   yw = []; const n = spans.length; if (!n) return;
   const lh = parseFloat(getComputedStyle($('text')).fontSize) * 1.45;
   let i = 0;
@@ -328,35 +334,42 @@ function mark(p){
   for (let i = a; i < b; i++) spans[i].classList.toggle('done', i < p);
   pos = p;
 }
-function setPos(p, force){
+function setPos(p){
   p = Math.max(0, Math.min(tokens.length, p));
-  conf = p; fpos = p; vel = 0; lastConfT = 0;
+  conf = p; fpos = p; pred = 0; vel = 0; hist = [];
   spans.forEach((s, i) => s.classList.toggle('done', i < p)); pos = p;
-  layout(); curY = targetY(); render(true);
+  relayout();
 }
-const targetY = () => Math.max(0, yAt(fpos) - $('prompt').clientHeight * S.line / 100);
+function relayout(){ layout(); curY = targetY(); render(true); }
+const targetY = () => Math.max(0, yAt(fpos) - promptH * S.line / 100);
 function render(force){
   const y = +curY.toFixed(2);
   if (!force && Math.abs(y - shownY) < 0.05) return;
   shownY = y; $('text').style.transform = `translate3d(0,${-y}px,0)`;
 }
 
-function heard(words){
-  const last = words[words.length - 1], prev = words[words.length - 2];
-  if (!last) return;
-  for (let j = Math.max(0, conf - 1); j < Math.min(tokens.length, conf + 14); j++) {
-    if (!near(tokens[j], last)) continue;
+function confirmTo(nc){
+  if (nc <= conf) return;
+  pred = Math.max(0, conf + pred - nc);
+  conf = nc;
+  hist.push([speakT, conf]);
+  while (hist.length > 2 && speakT - hist[1][0] > 4) hist.shift();
+  const h = hist[0], ds = speakT - h[0];
+  if (ds > 1.2) rate = Math.max(1.2, Math.min(5.5, rate * 0.5 + (conf - h[1]) / ds * 0.5));
+}
+function findWord(w, prev){
+  for (let j = Math.max(0, conf - 1); j < Math.min(tokens.length, conf + 16); j++) {
+    if (!near(tokens[j], w)) continue;
     const two = prev && j > 0 && near(tokens[j - 1], prev);
-    if (j - conf <= 2 || two) {
-      const nc = j + 1;
-      if (nc > conf) {
-        const now = performance.now(), d = nc - conf, dt = (now - lastConfT) / 1000;
-        if (lastConfT && dt > 0.15 && dt < 2.5 && d <= 6)
-          rate = Math.max(1.2, Math.min(5, rate * 0.75 + (d / dt) * 0.25));
-        lastConfT = now; conf = nc;
-      }
-      return;
-    }
+    if (j - conf <= 3 || two) return j + 1;
+  }
+  return -1;
+}
+function heard(words){
+  // Vom letzten Wort rückwärts: das erste, das im Skript passt, gilt. Füllwörter blockieren so nicht.
+  for (let k = words.length - 1; k >= 0 && k >= words.length - 4; k--) {
+    const r = findWord(words[k], words[k - 1]);
+    if (r > 0) { confirmTo(r); return; }
   }
 }
 function startRecog(){
@@ -365,9 +378,9 @@ function startRecog(){
   try {
     recog = new SR(); recog.lang = S.lang; recog.continuous = true; recog.interimResults = true;
     recog.onresult = e => {
-      lastVoice = performance.now();
+      if (!analyser) lastVoice = performance.now();
       const t = e.results[e.results.length - 1][0].transcript;
-      heard(t.split(/\s+/).map(norm).filter(Boolean).slice(-3));
+      heard(t.split(/\s+/).map(norm).filter(Boolean).slice(-4));
     };
     recog.onerror = e => {
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)) {
@@ -384,37 +397,35 @@ function stopRecog(){ recogWanted = false; if (recog) { try { recog.abort(); } c
 
 function startPrompter(){
   if (!tokens.length) return;
-  if (fpos >= tokens.length) setPos(0, true);
-  conf = Math.max(conf, Math.floor(fpos)); ensureAudio(); running = true;
+  if (fpos >= tokens.length - 0.5) setPos(0);
+  conf = Math.max(conf, Math.floor(fpos)); pred = 0; hist = []; ensureAudio(); running = true;
   if (S.mode === 'word' && !startRecog()) { setMode('voice'); toast('Kein Wortabgleich in diesem Browser. Modus „Stimme“ aktiv.', 4500); }
   $('playIcon').setAttribute('d', 'M7 4v16M17 4v16');
 }
 function stopPrompter(){ running = false; stopRecog(); $('playIcon').setAttribute('d', 'M7 4l13 8-13 8z'); }
 
 function tick(t){
-  const dt = Math.min(0.05, (t - lastT) / 1000); lastT = t;
+  const dt = Math.min(0.05, Math.max(0, (t - lastT) / 1000)); lastT = t;
   const lv = level();
   if (lv > S.thr) lastVoice = t;
-  const speaking = t - lastVoice < 450;
-  $('dot').classList.toggle('on', speaking && (running || lv > S.thr));
+  const speaking = t - lastVoice < 400;
+  const dotOn = speaking && (running || lv > S.thr);
+  if (dotOn !== tick.dot) { tick.dot = dotOn; $('dot').classList.toggle('on', dotOn); }
   let vt = 0;
   if (running) {
     if (S.mode === 'auto') vt = S.wpm / 60;
     else if (S.mode === 'voice') vt = speaking ? S.wpm / 60 : 0;
     else {
-      const gap = conf - fpos;
-      if (gap > 0) vt = rate + gap * 2.5;
-      else if (speaking) vt = rate * Math.max(0, Math.min(1, (LEAD + gap) / LEAD));
+      if (speaking) { speakT += dt; pred = Math.min(LEAD, pred + rate * dt); }
+      const goal = Math.min(tokens.length, conf + pred);
+      vt = Math.max(0, (speaking && pred < LEAD ? rate : 0) + (goal - fpos) * 2.2);
     }
   }
-  vel += (vt - vel) * (1 - Math.exp(-dt * (vt > vel ? 6 : 9)));
-  if (vel < 0.01 && vt === 0) vel = 0;
-  fpos += vel * dt;
-  if (S.mode === 'word') fpos = Math.min(fpos, conf + LEAD);
-  fpos = Math.min(fpos, tokens.length);
+  vel += (vt - vel) * (1 - Math.exp(-dt * 5));
+  if (vt === 0 && vel < 0.02) vel = 0;
+  fpos = Math.min(tokens.length, fpos + vel * dt);
   mark(Math.floor(fpos + 0.15));
-  const ty = targetY();
-  curY += (ty - curY) * (1 - Math.exp(-dt * 12));
+  curY += (targetY() - curY) * (1 - Math.exp(-dt * 14));
   render();
   if (running && !recorder && tokens.length && fpos >= tokens.length) stopPrompter();
   requestAnimationFrame(tick);
@@ -462,7 +473,7 @@ function finishRec(){
   const blob = new Blob(chunks, {type}); chunks = [];
   const d = new Date(), z = n => String(n).padStart(2, '0');
   const name = `prompter-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
-  recFile = new File([blob], name, {type});
+  recFile = new File([blob], name, {type}); shared = false;
   $('saveInfo').textContent = `${fmt(secs)} · ${(blob.size / 1048576).toFixed(0)} MB`;
   $('preview').src = URL.createObjectURL(blob);
   open('sSave');
@@ -470,7 +481,7 @@ function finishRec(){
 async function shareRec(){
   if (!recFile) return;
   if (navigator.canShare && navigator.canShare({files:[recFile]})) {
-    try { await navigator.share({files:[recFile]}); toast('Gesichert? Dann kannst du verwerfen.'); }
+    try { await navigator.share({files:[recFile]}); shared = true; toast('Gesichert. Mit ✕ schließen.'); }
     catch (e) { if (e.name !== 'AbortError') toast('Teilen fehlgeschlagen: ' + e.name); }
   } else {
     const a = document.createElement('a'); a.href = $('preview').src; a.download = recFile.name; a.click();
@@ -507,14 +518,15 @@ function saveScript(){
 }
 
 /* ---------- Sheets und Bedienung ---------- */
-function open(id){ closeAll(true); $(id).classList.add('open'); $('shade').classList.add('open'); }
-function closeAll(keep){
-  if ($('sSave').classList.contains('open') && !keep && recFile) return;
+function open(id){ closeAll(); $(id).classList.add('open'); $('shade').classList.add('open'); }
+function closeAll(){
   document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open')); $('shade').classList.remove('open');
 }
 function style(){
   const t = $('text'); t.style.fontFamily = S.font; t.style.fontSize = S.size + 'px';
-  layout(); curY = targetY(); render(true);
+  t.style.padding = `0 calc(22px + ${S.side}%)`;
+  $('prompt').style.height = S.ph + '%';
+  relayout();
 }
 function bindRange(id, key, unit, after){
   const el = $(id); el.value = S[key]; $(id + 'O').textContent = S[key] + unit;
@@ -523,12 +535,13 @@ function bindRange(id, key, unit, after){
 
 $('rec').onclick = () => recorder ? stopRec() : startRec();
 $('play').onclick = () => running ? (recorder ? null : stopPrompter()) : startPrompter();
-$('back').onclick = () => setPos(0, true);
+$('back').onclick = () => setPos(0);
 $('flip').onclick = () => { S.facing = S.facing === 'user' ? 'environment' : 'user'; persist(); startCam(); };
 $('bSet').onclick = () => open('sSet');
 $('bScr').onclick = () => { drawList(); open('sScr'); };
 $('bMode').onclick = () => setMode({word:'voice', voice:'auto', auto:'word'}[S.mode]);
-$('shade').onclick = () => closeAll();
+$('shade').onclick = () => { if (!$('sSave').classList.contains('open')) closeAll(); };
+$('xSave').onclick = () => { if (!shared && !confirm('Aufnahme ist nicht gesichert. Trotzdem verwerfen?')) return; dropRec(); };
 $('save').onclick = saveScript;
 $('share').onclick = shareRec;
 $('drop').onclick = () => { if (confirm('Aufnahme wirklich verwerfen?')) dropRec(); };
@@ -540,12 +553,13 @@ document.querySelectorAll('#modes button').forEach(b => {
   b.onclick = () => { if (recorder) return; S.q = b.dataset.q; persist();
     document.querySelectorAll('#modes button').forEach(o => o.classList.toggle('act', o === b)); startCam(); };
 });
-$('text').onclick = e => { const i = spans.indexOf(e.target); if (i >= 0) setPos(i, true); };
+$('text').onclick = e => { const i = spans.indexOf(e.target); if (i >= 0) setPos(i); };
 bindRange('wpm', 'wpm', ''); bindRange('thr', 'thr', '');
 bindRange('size', 'size', '', style); bindRange('line', 'line', '%', style);
+bindRange('ph', 'ph', '%', style); bindRange('side', 'side', '%', style);
 $('lang').value = S.lang; $('lang').onchange = e => { S.lang = e.target.value; persist(); };
 $('font').value = S.font; $('font').onchange = e => { S.font = e.target.value; persist(); style(); };
-addEventListener('resize', () => { layout(); curY = targetY(); render(true); });
+addEventListener('resize', relayout);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !recorder && (!vTrack || vTrack.readyState === 'ended')) startCam();
 });
